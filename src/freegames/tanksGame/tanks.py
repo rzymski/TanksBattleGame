@@ -582,6 +582,7 @@ class Tank:
             self.game.drawExplosion(Turtle(visible=False), x + self.game.tileSize // 2, y + self.game.tileSize // 2)
             self.takeDamage(f"tank {self.tankId} ran over a mine")
         elif self.game.tiles[self.game.offset(self.position)] == Tile.FOREST.value:
+            self.tankTurtle.clear()
             self.hpTurtle.clear()  # tank hide in forest
         else:
             self.drawTank()
@@ -682,149 +683,71 @@ class AITank(Tank):
         if not self.target:
             return
 
-        if not self.path or self.positionReached(self.path[0]):
-            self.path = self.findPathToTarget()
+        dx = self.target.position.x - self.position.x
+        dy = self.target.position.y - self.position.y
 
-        if self.path:
-            next_tile = self.path[0]
-            tile_index = next_tile[0] + next_tile[1] * self.game.columns
-            tile_value = self.game.tiles[tile_index]
-
-            # Jeśli następny kafelek to zniszczalny blok, strzel do niego
-            if tile_value == Tile.DESTRUCTIBLE_BLOCK.value:
-                dx = next_tile[0] - self.game.getTileCoordinates(self.position)[0]
-                dy = next_tile[1] - self.game.getTileCoordinates(self.position)[1]
-                if dx == 1:
-                    self.change(vector(0, 0), 90)
-                elif dx == -1:
-                    self.change(vector(0, 0), 270)
-                elif dy == -1:
-                    self.change(vector(0, 0), 0)
-                elif dy == 1:
-                    self.change(vector(0, 0), 180)
-                self.shoot()
-                return
+        tankSpeed = self.game.tileSize // 20
+        if abs(dx) > abs(dy):
+            if dx > 0 and self.game.valid(self.position + vector(tankSpeed, 0)):
+                self.change(vector(tankSpeed, 0), 90)
+            elif dx < 0 and self.game.valid(self.position + vector(-tankSpeed, 0)):
+                self.change(vector(-tankSpeed, 0), 270)
             else:
-                # Poruszaj się w kierunku następnego kafelka
-                dx = next_tile[0] - self.game.getTileCoordinates(self.position)[0]
-                dy = next_tile[1] - self.game.getTileCoordinates(self.position)[1]
-
-                if dx == 1:
-                    self.change(vector(self.game.tileSize // 4, 0), 90)
-                elif dx == -1:
-                    self.change(vector(-self.game.tileSize // 4, 0), 270)
-                elif dy == -1:
-                    self.change(vector(0, self.game.tileSize // 4), 0)
-                elif dy == 1:
-                    self.change(vector(0, -self.game.tileSize // 4), 180)
-
-                if self.positionReached(next_tile):
-                    self.path.pop(0)
+                if dy > 0:
+                    self.change(vector(0, tankSpeed), 0)
+                elif dy < 0:
+                    self.change(vector(0, -tankSpeed), 180)
         else:
-            # Jeśli brak ścieżki, nic nie rób lub inna logika
-            pass
+            if dy > 0 and self.game.valid(self.position + vector(0, tankSpeed)):
+                self.change(vector(0, tankSpeed), 0)
+            elif dy < 0 and self.game.valid(self.position + vector(0, -tankSpeed)):
+                self.change(vector(0, -tankSpeed), 180)
+            else:
+                if dx > 0:
+                    self.change(vector(tankSpeed, 0), 90)
+                elif dx < 0:
+                    self.change(vector(-tankSpeed, 0), 270)
 
         # Sprawdź, czy AI ma linię widzenia do gracza i strzelaj
         if self.hasLineOfSight(self.target.position):
             self.adjustDirectionTowards(self.target.position)
             self.shoot()
 
-    def findPathToTarget(self):
-        start_pos = self.game.getTileCoordinates(self.position)
-        goal_pos = self.game.getTileCoordinates(self.target.position)
+        # targetTileIndex = self.game.offset(self.target.position)
+        # myTileIndex = self.game.offset(self.position)
+        #
+        # targetRow, targetColumn = divmod(targetTileIndex, self.game.columns)
+        # myRow, myColumn = divmod(myTileIndex, self.game.columns)
+        # print(f"Tank {self.tankId}:\nM {myRow}x{myColumn}\nT {targetRow}x{targetColumn}")
 
-        open_list = []
-        heapq.heappush(open_list, (0, Node(start_pos)))
-        closed_set = set()
+    def checkIfWantMoveInThatDirection(self):
+        checkPosition = vector.copy(self.position)
+        checkPosition.move(self.speed)
+        checkTileIndex = self.game.offset(checkPosition)
+        print(f"Speed={self.speed} Kierunek={self.direction}  moje pole= {self.game.offset(self.position)} sprawdzam={checkTileIndex} wS={self.game.tiles[checkTileIndex]}")
+        if self.game.tiles[checkTileIndex] == Tile.MINE.value:
+            return False
+        for allyTank in self.game.enemyTanks:
+            if allyTank != self and checkTileIndex == self.game.offset(allyTank.position):
+                return False
+        return True
 
-        while open_list:
-            current_f, current_node = heapq.heappop(open_list)
-            current_pos = current_node.position
-
-            if current_pos == goal_pos:
-                # Rekonstrukcja ścieżki
-                path = []
-                while current_node.parent is not None:
-                    path.append(current_node.position)
-                    current_node = current_node.parent
-                path.reverse()
-                return path
-
-            closed_set.add(current_pos)
-
-            # Sąsiedzi: góra, dół, lewo, prawo
-            neighbors = [
-                (current_pos[0] - 1, current_pos[1]),
-                (current_pos[0] + 1, current_pos[1]),
-                (current_pos[0], current_pos[1] - 1),
-                (current_pos[0], current_pos[1] + 1)
-            ]
-
-            for neighbor_pos in neighbors:
-                if neighbor_pos in closed_set:
-                    continue
-
-                x, y = neighbor_pos
-                if x < 0 or x >= self.game.columns or y < 0 or y >= self.game.rows:
-                    continue
-
-                index = x + y * self.game.columns
-                tile = self.game.tiles[index]
-
-                # Sprawdź, czy pole jest przejezdne
-                if tile in [Tile.NO_TILE.value, Tile.RIVER.value, Tile.INDESTRUCTIBLE_BLOCK.value, Tile.MINE.value]:
-                    continue  # Nieprzejezdne
-
-                g = current_node.g + (5 if tile == Tile.DESTRUCTIBLE_BLOCK.value else 1)
-                h = abs(goal_pos[0] - x) + abs(goal_pos[1] - y)
-                f = g + h
-
-                neighbor_node = Node(position=neighbor_pos, parent=current_node, g=g, h=h)
-                heapq.heappush(open_list, (f, neighbor_node))
-
-        return None  # Ścieżka nieznaleziona
-
-    def positionReached(self, tile_pos):
-        current_tile = self.game.getTileCoordinates(self.position)
-        return current_tile == tile_pos
-
-    def adjustDirectionTowards(self, target_position):
-        dx = target_position.x - self.position.x
-        dy = target_position.y - self.position.y
-        if abs(dx) > abs(dy):
-            if dx > 0:
-                desired_direction = 90
-            else:
-                desired_direction = 270
-        else:
-            if dy > 0:
-                desired_direction = 0
-            else:
-                desired_direction = 180
-        self.change(vector(0, 0), desired_direction)
-
-    def hasLineOfSight(self, target_pos):
-        x0, y0 = self.game.getTileCoordinates(self.position)
-        x1, y1 = self.game.getTileCoordinates(target_pos)
-
-        if x0 == x1:
-            step = 1 if y1 > y0 else -1
-            for y in range(y0 + step, y1, step):
-                index = x0 + y * self.game.columns
-                tile = self.game.tiles[index]
-                if tile in [Tile.INDESTRUCTIBLE_BLOCK.value, Tile.DESTRUCTIBLE_BLOCK.value]:
-                    return False
-            return True
-        elif y0 == y1:
-            step = 1 if x1 > x0 else -1
-            for x in range(x0 + step, x1, step):
-                index = x + y0 * self.game.columns
-                tile = self.game.tiles[index]
-                if tile in [Tile.INDESTRUCTIBLE_BLOCK.value, Tile.DESTRUCTIBLE_BLOCK.value]:
-                    return False
-            return True
-        else:
-            return False  # Brak linii prostej
+    def checkIfAnyAllyTankBetweenSelfAndTarget(self):
+        selfX, selfY = self.position
+        targetX, targetY = self.target.position
+        for allyTank in self.game.enemyTanks:
+            if allyTank == self:
+                continue
+            allyX, allyY = allyTank.position
+            dx = self.position.x - allyX
+            dy = self.position.y - allyY
+            if ((self.direction == 90 and abs(dy) < self.game.tileSize and selfX < allyX < targetX) or
+                    (self.direction == 270 and abs(dy) < self.game.tileSize and targetX < allyX < selfX) or
+                    (self.direction == 0 and abs(dx) < self.game.tileSize and selfY < allyY < targetY) or
+                    (self.direction == 180 and abs(dx) < self.game.tileSize and targetY < allyY < selfY)):
+                # print(f"Index={self.game.offset(self.position)} S{self.tankId}=({selfX};{selfY}) T=({targetX};{targetY}) A=({allyX};{allyY})")
+                return True
+        return False
 
 
 mixer.init()  # for playing sounds
